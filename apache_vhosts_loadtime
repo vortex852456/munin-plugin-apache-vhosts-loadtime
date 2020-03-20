@@ -1,0 +1,132 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * todos:
+ * - handle different webservers (nginx, lighttpd, ...)
+ * - rewrite in python
+ */
+
+// define options
+$config = 'config' === ($argv[1] ?? false);
+$glob = getenv('vhostsglob');
+
+// check options - set defaults
+if (!$glob) {
+	$glob = '/etc/apache2/sites-available/*\.vhost';
+}
+
+// get apache vhosts by glob
+$hosts = [];
+$files = glob($glob);
+foreach ($files as $file) {
+	// get file content
+	$fileContent = file_get_contents($file);
+
+	if ($fileContent) {
+		// get all server name lines
+		preg_match_all('/^.*?ServerName (.*?)\s/m', $fileContent, $matches);
+
+		// found lines
+		$lines = $matches[0] ?? [];
+
+		foreach ($lines as $matchKey => $line) {
+			// check if servername is out commented
+			if (1 !== preg_match('/#.*?ServerName/', $line)) {
+				$hosts[] = $matches[1][$matchKey];
+			}
+		}
+	}
+}
+
+// unique
+$hosts = array_unique($hosts);
+
+// show config if requested
+if ($config) {
+	$lines = [];
+	$lines[] = 'graph_title apache vhosts loadtimes';
+	$lines[] = 'graph_args --base 1000 -l 0';
+	$lines[] = 'graph_vlabel seconds';
+	$lines[] = 'graph_category apache';
+	$lines[] = 'graph_info This graph shows apache vhosts loadtime RTT statistics.';
+
+	// add each host
+	$key = 0;
+	foreach ($hosts as $host) {
+		$lines[] = "site{$key}.label {$host}";
+		$lines[] = "site{$key}.info Page loadtime for {$host}";
+		$lines[] = "site{$key}.draw LINE2";
+		$lines[] = "site{$key}_statuscode.label {$host} status code";
+		$lines[] = "site{$key}_statuscode.graph no";
+
+		$key++;
+	}
+
+	// output
+	array_walk($lines, function (string $line) {
+		echo $line . PHP_EOL;
+	});
+
+	// bye bye
+	exit(0);
+}
+
+// init curl multi handle
+$curlMulti = curl_multi_init();
+
+// init curl
+$curlResources = [];
+foreach ($hosts as $host) {
+	$curl = curl_init($host);
+	curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1); // silence return instead of terminal output
+	curl_setopt($curl, CURLOPT_FOLLOWLOCATION, 1);
+	curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, 0);
+	curl_setopt($curl, CURLOPT_HEADER, 0);
+	curl_setopt($curl, CURLOPT_TIMEOUT, 120); // max seconds timeout
+
+	curl_multi_add_handle($curlMulti, $curl);
+
+	$curlResources[$host] = $curl;
+}
+
+// execute requests
+$active = null;
+do {
+	$status = curl_multi_exec($curlMulti, $active);
+	if ($active) {
+		curl_multi_select($curlMulti);
+	}
+} while ($active && $status === CURLM_OK);
+
+
+// gather results
+$curlResults = [];
+foreach ($curlResources as $host => $curl) {
+	// we dont need it anymore
+	curl_multi_remove_handle($curlMulti, $curl);
+
+	// get information about the request
+	$info = curl_getinfo($curl);
+	$curlResults[$host] = [
+		'http_code' => $info['http_code'],
+		'total_time' => $info['total_time']
+	] ;
+}
+
+// close each handler
+curl_multi_close($curlMulti);
+
+// generate result output
+$lines = [];
+$key = 0;
+foreach ($curlResults as $host => $result) {
+	$lines[] = "site{$key}.value {$result['total_time']}";
+	$lines[] = "site{$key}_statuscode.value {$result['http_code']}";
+	$key++;
+}
+
+// output
+array_walk($lines, function (string $line) {
+	echo $line . PHP_EOL;
+});
