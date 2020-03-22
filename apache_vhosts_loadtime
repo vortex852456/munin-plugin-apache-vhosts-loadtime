@@ -13,7 +13,7 @@ $glob = getenv('vhostsglob');
 
 // check options - set defaults
 if (!$glob) {
-	$glob = '/etc/apache2/sites-available/*\.vhost';
+	$glob = '/var/docker/source/main/docker-compose.yml';
 }
 
 // get apache vhosts by glob
@@ -25,16 +25,13 @@ foreach ($files as $file) {
 
 	if ($fileContent) {
 		// get all server name lines
-		preg_match_all('/^.*?ServerName (.*?)\s/m', $fileContent, $matches);
+		preg_match_all('/^.*?LETSENCRYPT_HOST: (.*?)\s/m', $fileContent, $matches);
 
 		// found lines
 		$lines = $matches[0] ?? [];
 
 		foreach ($lines as $matchKey => $line) {
-			// check if servername is out commented
-			if (1 !== preg_match('/#.*?ServerName/', $line)) {
-				$hosts[] = $matches[1][$matchKey];
-			}
+			$hosts[] = $matches[1][$matchKey];
 		}
 	}
 }
