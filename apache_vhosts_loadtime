@@ -3,18 +3,22 @@
 
 /**
  * todos:
- * - handle different webservers (nginx, lighttpd, ...)
  * - rewrite in python
  */
 
 // define options
 $config = 'config' === ($argv[1] ?? false);
 $glob = getenv('vhostsglob');
+$serverNameCheck = getenv('servernamecheck');
 
 // check options - set defaults
 if (!$glob) {
-	$glob = '/etc/apache2/sites-available/*\.vhost';
+	$glob = '/etc/apache2/sites-available/*\.vhost'; // apache
 }
+if (!$serverNameCheck) {
+	$serverNameCheck = 'ServerName'; // apache
+}
+$serverNameCheck = preg_quote($serverNameCheck, '/');
 
 // get apache vhosts by glob
 $hosts = [];
@@ -25,14 +29,14 @@ foreach ($files as $file) {
 
 	if ($fileContent) {
 		// get all server name lines
-		preg_match_all('/^.*?ServerName (.*?)\s/m', $fileContent, $matches);
+		preg_match_all("/^.*?{$serverNameCheck} (.*?)\s/m", $fileContent, $matches);
 
 		// found lines
 		$lines = $matches[0] ?? [];
 
 		foreach ($lines as $matchKey => $line) {
 			// check if servername is out commented
-			if (1 !== preg_match('/#.*?ServerName/', $line)) {
+			if (1 !== preg_match("/#.*?{$serverNameCheck}/", $line)) {
 				$hosts[] = $matches[1][$matchKey];
 			}
 		}
